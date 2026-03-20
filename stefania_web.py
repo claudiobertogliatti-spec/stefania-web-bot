@@ -4,18 +4,16 @@ from flask_cors import CORS
 import anthropic
 
 app = Flask(__name__)
-CORS(app)  # Permette a Systeme.io di comunicare con questo server
+CORS(app)
 
-# Configurazione Anthropic
-client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+# Inizializzazione corretta del client
+client = anthropic.Anthropic(
+    api_key=os.environ.get("ANTHROPIC_API_KEY")
+)
 
-# Prompt di sistema per definire l'identità di Stefania
-SYSTEM_PROMPT = """
-Sei Stefania, la coordinatrice del team Evolution Pro. 
+SYSTEM_PROMPT = """Sei Stefania, l'assistente esperta di Evolution Pro. 
 Il tuo obiettivo è assistere gli utenti con professionalità, empatia e precisione.
-Sei pragmatica, orientata ai risultati e conosci perfettamente il sistema 'Main' gestito da Claudio e Antonella.
-Usa un tono cordiale ma professionale.
-"""
+Sei pragmatica, orientata ai risultati e conosci il sistema 'Main' di Claudio e Antonella."""
 
 @app.route('/')
 def home():
@@ -25,16 +23,20 @@ def home():
 def chat():
     data = request.json
     user_message = data.get("message", "")
-    
+
     try:
-        response = client.messages.create(
+        # Sintassi specifica per l'ultima versione della libreria
+        message = client.messages.create(
             model="claude-3-haiku-20240307",
             max_tokens=1000,
             system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_message}]
+            messages=[
+                {"role": "user", "content": user_message}
+            ]
         )
-        return jsonify({"response": response.content[0].text})
+        return jsonify({"response": message.content[0].text})
     except Exception as e:
+        print(f"Errore API: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
