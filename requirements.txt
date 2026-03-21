@@ -1,5 +1,4 @@
-flask
-flask-cors
-anthropic
-python-telegram-bot
-gunicorn
+flask-cors==5.0.0
+gunicorn==23.0.0
+python-telegram-bot==21.6
+anthropic==0.49.0
