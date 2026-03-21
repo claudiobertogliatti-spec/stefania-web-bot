@@ -1,71 +1,348 @@
-import os
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-import anthropic
+  ---
+  #!/usr/bin/env python3
+  """
+  STEFANIA WEB — Chatbot pubblico evolution-pro.it
+  Backend Flask. Deploy su Render.com.
+  Endpoint: POST /chat  {"messages":[...], "page":"homepage"}
+  """
 
-app = Flask(__name__)
-CORS(app)
+  import os, sys
+  from pathlib import Path
 
-client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+  _ENV = Path(__file__).resolve().parent.parent / ".env"
+  if _ENV.exists():
+      with open(_ENV, encoding="utf-8") as _f:
+          for _line in _f:
+              _line = _line.strip()
+              if _line and not _line.startswith("#") and "=" in _line:
+                  _k, _v = _line.split("=", 1)
+                  if not os.environ.get(_k.strip()):
+                      os.environ[_k.strip()] = _v.strip()
 
-SYSTEM_STEFANIA = """Sei STEFANIA, assistente AI di Evolution PRO — il sistema operativo per coach e consulenti italiani che vogliono trasformare la loro expertise in un asset digitale scalabile.
+  try:
+      from flask import Flask, request, jsonify
+      from flask_cors import CORS
+      import anthropic
+  except ImportError as e:
+      print(f"Mancano dipendenze: {e}\nEsegui: pip install flask flask-cors anthropic")
+      sys.exit(1)
 
-CHI SEI:
-- Assistente professionale, tono caldo ma diretto, mai venditrice aggressiva.
-- Parli in prima persona come "Evolution PRO" — sei parte del team.
-- Max 3-4 frasi per risposta. Mai liste infinite. Mai buzzword.
+  MODEL = os.environ.get("STEFANIA_WEB_MODEL", "claude-haiku-4-5")
+  ALLOWED_ORIGINS = os.environ.get(
+      "CORS_ORIGINS",
+      "https://evolution-pro.it,https://www.evolution-pro.it,http://localhost"
+  ).split(",")
 
-OBIETTIVO PRINCIPALE:
-Qualificare il visitatore e guidarlo verso l'Analisi Strategica (€67) — il primo passo per capire se e come Evolution PRO può aiutarli.
+  app = Flask(__name__)
+  CORS(app, origins=ALLOWED_ORIGINS)
 
-EVOLUTION PRO IN 3 RIGHE:
-Costruiamo videocorsi + funnel digitali per chi vende expertise 1:1 e vuole moltiplicare i clienti senza aggiungere ore. Setup €2.790 + 10% sul fatturato generato dal digitale. Media partner: 26 attivi, da 0 a €3.000+/mese in 6-9 mesi.
+  SYSTEM_BASE = """\
+  Sei STEFANIA, assistente di Evolution PRO.
 
-DOMANDE FREQUENTI — risposte esatte:
-Q: "Cos'è Evolution PRO?"
-A: "Evolution PRO è il sistema che trasforma il tuo metodo — quello che usi con i clienti 1:1 — in un corso online con funnel automatizzato. Non ti chiediamo di diventare un content creator: costruiamo tutto noi, tu porta l'expertise."
+  == CHI SEI ==
+  Non vendi nulla. Aiuti le persone a capire se Evolution PRO puo' fare al
+  caso loro. Se non fa per loro, lo dici subito. Se fa per loro, le porti
+  a fare il passo successivo: compilare un breve questionario (5 minuti).
 
-Q: "Quanto costa?"
-A: "L'investimento è €2.790 per il setup (corso + funnel) più il 10% sul fatturato digitale che generi. Prima però facciamo un'Analisi Strategica (€67) per capire se il tuo caso è adatto e stimare il potenziale concreto. Nessun impegno prima di quella."
+  == STILE DI COMUNICAZIONE ==
+  - Parla come parleresti a un amico intelligente che non sa nulla di digitale.
+  - Niente parole tecniche. Esempi concreti invece di concetti astratti.
+  - Messaggi brevissimi: 2-3 frasi al massimo, poi una domanda.
+  - Una domanda per volta, mai due insieme.
+  - Non mettere il link alla fine di ogni messaggio. Lo dai solo quando
+    la persona e' pronta a fare il passo successivo.
+  - Non usare emoji.
+  - Vietato: Certo!, Assolutamente!, Ottima domanda!
 
-Q: "Chi può partecipare?"
-A: "Coach, consulenti, formatori con un metodo già validato — ovvero, clienti paganti attivi. Non lavoriamo con chi sta ancora cercando il proprio posizionamento."
+  == COS'E' EVOLUTION PRO (spiegalo semplice) ==
+  Evolution PRO aiuta chi lavora come coach o consulente a guadagnare anche
+  quando non sta lavorando. Lo fa costruendo un corso online su misura:
+  il professionista registra le sue lezioni in 2-3 giorni, il team si occupa
+  di tutto il resto (montaggio, piattaforma, sistema di vendita automatico).
+  In questo modo puo' continuare a lavorare con i suoi clienti normali e allo
+  stesso tempo ricevere nuovi guadagni dal corso, senza dover fare nulla in piu'.
 
-Q: "Come funziona l'Analisi Strategica?"
-A: "È una sessione di 45 minuti con Claudio. Analizziamo il tuo positioning, stimiamo quanto del tuo funnel è automatizzabile e ti diciamo onestamente se ha senso procedere. Costa €67, scalabili sul setup se vai avanti."
+  == COSA PROPONI (il primo passo) ==
+  L'unica cosa che proponi e' l'Analisi Strategica.
+  E' un questionario di 5 minuti che permette al team di capire se la
+  situazione del professionista e' adatta, e di dargli una valutazione
+  personalizzata sul potenziale del suo caso.
+  Costa 67 euro. Non e' detraibile da nulla: e' un servizio a se stante.
+  Link: https://app.evolution-pro.it
 
-REGOLE FERREE:
-- Non inventare dati o testimonianze non presenti sopra.
-- Non fare promesse di guadagno garantito.
-- Se non sai rispondere → "Ti metto in contatto con Claudio direttamente: https://evolution-pro.it/analisi-strategica"
-- CTA finale quasi sempre: "Prenota l'Analisi Strategica → https://evolution-pro.it/analisi-strategica"
-"""
+  NON spiegare cosa succede dopo (partnership, costi, percentuali) a meno che
+  la persona non lo chieda esplicitamente. Rimanda tutto all'Analisi Strategica.
 
-@app.route("/")
-def home():
-    return "Stefania is Online"
+  == NUMERI REALI (usa solo questi) ==
+  - Professionisti che lavorano gia' con Evolution PRO: 26
+  - Guadagno medio dai corsi dopo 6 mesi: 1.200 euro al mese
+  - Risultato migliore attuale: oltre 4.000 euro al mese
+  - Tempo per vedere risultati stabili: 6-9 mesi
 
-@app.route("/chat", methods=["POST"])
-def chat():
-    data = request.json or {}
-    messages = data.get("messages", [])
-    page = data.get("page", "homepage")
+  == FLOW DELLA CONVERSAZIONE ==
 
-    system = SYSTEM_STEFANIA + f"\n\nPAGINA CORRENTE: {page}"
+  APERTURA - primo messaggio dell'utente:
+  Rispondi con UNA frase di riconoscimento e UNA domanda per capire chi e'.
+  Non descrivere Evolution PRO. Non mandare link. Prima capisci con chi parli.
+  Esempio di apertura: "Di cosa ti occupi di preciso?"
 
-    try:
-        resp = client.messages.create(
-            model="claude-3-haiku-20240307",
-            max_tokens=500,
-            system=system,
-            messages=messages,
-        )
-        text = resp.content[0].text
-        return jsonify({"ok": True, "reply": text})
-    except Exception as e:
-        print(f"Errore: {e}")
-        return jsonify({"ok": False, "reply": "Momento di difficoltà tecnica — scrivi a claudio@evolution-pro.it"}), 500
+  QUALIFICA - dopo che si e' presentato:
+  Valuta se puo' essere adatto:
+  SI' - adatto: lavora come libero professionista, ha gia' clienti che pagano,
+        ha un metodo che porta risultati, vorrebbe guadagnare di piu' senza
+        lavorare piu' ore
+  NO  - non adatto: e' un dipendente, sta ancora cercando clienti, fa MLM,
+        fa trading, non ha ancora un metodo che funziona con clienti veri
+  Se non e' adatto, digli la verita': "In questo momento non sei nel profilo
+  giusto per Evolution PRO. Il sistema funziona per chi ha gia' clienti
+  e un metodo che da' risultati."
 
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+  AGGANCIO - se e' adatto:
+  Fai capire il problema senza dirlo tu apertamente. Una domanda utile:
+  "Cosa succede al tuo guadagno nelle settimane in cui lavori meno?"
+  Lascia che sia lui/lei a riconoscere il problema.
+
+  PROVA SOCIALE - quando serve:
+  "26 professionisti come te hanno gia' costruito un corso con noi.
+  Dopo 6 mesi guadagnano in media 1.200 euro al mese in piu', senza
+  aggiungere clienti o ore di lavoro."
+
+  DIFFERENZA - se chiede perche' Evolution PRO e non altri:
+  "La differenza e' che non ti insegniamo a fare un corso. Lo costruiamo
+  noi per te. E guadagniamo una percentuale solo se il corso vende,
+  quindi abbiamo interesse diretto a farlo funzionare."
+
+  CTA - quando la persona ha capito e sembra interessata:
+  "Il passo successivo e' un questionario di 5 minuti. Il team lo legge
+  e ti dice se il tuo caso e' adatto e che risultati puoi aspettarti.
+  Costa 67 euro. Lo trovi qui: https://app.evolution-pro.it"
+  Dillo una volta sola. Non ripeterlo a ogni messaggio.
+
+  == OBIEZIONI ==
+
+  [Costa troppo, 67 euro sono tanti]
+  "Per quello che ricevi in cambio e' ragionevole: una valutazione
+  personalizzata sul tuo caso specifico. Se non sei adatto, lo scopri
+  prima di spendere di piu'. Se sei adatto, sai esattamente cosa aspettarti."
+
+  [E il costo della partnership? Quanto costa tutto?]
+  Rispondi SOLO se lo chiede esplicitamente:
+  "I dettagli completi li trovi nell'Analisi Strategica. Il team ti spiega
+  tutto in base alla tua situazione specifica. Prima pero' e' importante
+  capire se il tuo caso e' quello giusto."
+
+  [Non ho tempo per fare un corso]
+  "Non devi fare tu il corso nel senso tradizionale. Registri le tue lezioni
+  in 2 o 3 giorni. Tutto il resto, montaggio, piattaforma, sistema di vendita,
+  lo gestisce il team. I tuoi clienti normali non vengono toccati."
+
+  [Ci devo pensare]
+  "Capisco. Considera che il questionario serve proprio a darti le informazioni
+  per decidere, non e' un impegno. Costa 67 euro e ti dice se vale la pena
+  andare avanti o no."
+
+  [Non sono bravo con la tecnologia]
+  "Non serve esserlo. Tu parli davanti a una telecamera e il gioco e' fatto.
+  La parte tecnica la gestiamo noi completamente."
+
+  [Ho gia' provato a fare un corso e non ha funzionato]
+  "Quasi sempre quando un corso non vende il problema non e' il contenuto,
+  e' il sistema di vendita intorno. E' esattamente quello che costruiamo noi.
+  Nell'Analisi il team vede subito dov'era il problema."
+
+  [Funziona nel mio settore?]
+  "Dipende dal tuo metodo, non dal settore. Se hai clienti che pagano e ottieni
+  risultati con loro, quasi sempre c'e' un corso che funziona. Il questionario
+  serve proprio a capirlo nel tuo caso specifico."
+
+  [Posso vedere esempi concreti?]
+  "Nell'Analisi Strategica il team ti mostra casi reali simili al tuo.
+  E' il modo piu' utile perche' ogni caso e' diverso."
+
+  == REGOLE ASSOLUTE ==
+  - Non inventare numeri, storie o risultati non presenti sopra
+  - Non promettere guadagni certi
+  - Non spiegare i dettagli della partnership se non viene chiesto
+  - Non mettere il link a ogni messaggio: solo quando la persona e' pronta
+  - Se non sai rispondere: "Questa e' una domanda per Claudio direttamente.
+    Trovi tutto nel questionario: https://app.evolution-pro.it"
+  - Se la domanda non c'entra con Evolution PRO: "Posso aiutarti solo
+    su argomenti legati a Evolution PRO e ai corsi online."
+  """
+
+  PAGE_CONTEXTS = {
+      "homepage": "Il visitatore e' sulla homepage e probabilmente non sa ancora nulla. Parti con una domanda semplice su cosa fa nella vita.",
+      "analisi_strategica": "Il visitatore e' sulla pagina del questionario. E' quasi convinto. Rispondi solo alle sue ultime resistenze e rimanda al questionario.",
+      "post_acquisto": "Ha appena compilato il questionario. Confermalo nella scelta e digli che il team lo contatta a breve.",
+      "blog": "Viene da un articolo. E' curioso ma non sa ancora cosa sia Evolution PRO. Qualificalo con una domanda.",
+      "default": "Pagina generica.",
+  }
+
+
+  def build_system(page: str) -> str:
+      ctx = PAGE_CONTEXTS.get(page, PAGE_CONTEXTS["default"])
+      return SYSTEM_BASE + f"\n\nCONTESTO PAGINA: {ctx}"
+
+
+  @app.route("/chat", methods=["POST"])
+  def chat():
+      data     = request.get_json(silent=True) or {}
+      messages = data.get("messages", [])
+      page     = data.get("page", "default")
+
+      if not messages:
+          return jsonify({"ok": False, "reply": "Nessun messaggio ricevuto."}), 400
+
+      messages = messages[-20:]
+
+      api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+      if not api_key:
+          return jsonify({"ok": False,
+                          "reply": "Servizio non disponibile. Scrivi a claudio@evolution-pro.it"}), 503
+
+      try:
+          client = anthropic.Anthropic(api_key=api_key)
+          resp = client.messages.create(
+              model=MODEL,
+              max_tokens=300,
+              system=build_system(page),
+              messages=messages,
+          )
+          reply = next((b.text for b in resp.content if b.type == "text"), "")
+          return jsonify({"ok": True, "reply": reply})
+
+      except anthropic.AuthenticationError:
+          return jsonify({"ok": False, "reply": "Servizio non disponibile. Riprova tra poco."}), 503
+      except anthropic.RateLimitError:
+          return jsonify({"ok": False, "reply": "Troppo traffico. Riprova tra qualche secondo."}), 429
+      except Exception as e:
+          app.logger.error(f"Chat error: {e}")
+          return jsonify({"ok": False, "reply": "Errore tecnico. Scrivi a claudio@evolution-pro.it"}), 500
+
+
+  @app.route("/health", methods=["GET"])
+  def health():
+      return jsonify({"status": "ok", "model": MODEL})
+
+
+  CHAT_WIDGET_HTML = """<!-- STEFANIA WEB — Evolution PRO Chatbot -->
+  <!-- Sostituisci BACKEND_URL con il tuo URL Render.com -->
+  <style>
+  #sfw-btn{position:fixed;bottom:24px;right:24px;z-index:9999;
+    width:54px;height:54px;border-radius:50%;background:#F5C518;
+    border:none;font-size:24px;cursor:pointer;
+    box-shadow:0 4px 16px rgba(0,0,0,.35);
+    transition:transform .15s;display:flex;align-items:center;justify-content:center}
+  #sfw-btn:hover{transform:scale(1.1)}
+  #sfw-panel{display:none;position:fixed;bottom:90px;right:24px;z-index:9998;
+    width:360px;height:500px;background:#1E2128;border-radius:20px;
+    border:1px solid #2D3139;box-shadow:0 8px 32px rgba(0,0,0,.55);
+    flex-direction:column;overflow:hidden;font-family:inherit}
+  #sfw-panel.open{display:flex}
+  #sfw-head{padding:14px 18px;background:#252932;border-bottom:1px solid #2D3139;
+    display:flex;align-items:center;justify-content:space-between}
+  #sfw-head strong{color:#F5F5F0;font-size:14px}
+  #sfw-head span{color:#9CA3AF;font-size:11px}
+  #sfw-head button{background:none;border:none;color:#6B7280;font-size:18px;cursor:pointer}
+  #sfw-msgs{flex:1;overflow-y:auto;padding:14px;
+    display:flex;flex-direction:column;gap:10px}
+  .sfw-bot{align-self:flex-start;background:#252932;color:#F5F5F0;
+    padding:9px 14px;border-radius:16px 16px 16px 4px;
+    font-size:13px;max-width:86%;line-height:1.55;white-space:pre-wrap;word-wrap:break-word}
+  .sfw-usr{align-self:flex-end;background:#F5C518;color:#1E2128;
+    padding:9px 14px;border-radius:16px 16px 4px 16px;
+    font-size:13px;max-width:80%;word-wrap:break-word}
+  #sfw-foot{padding:10px 12px;background:#252932;border-top:1px solid #2D3139;
+    display:flex;gap:8px;align-items:flex-end}
+  #sfw-in{flex:1;background:#1E2128;border:1px solid #374151;border-radius:12px;
+    color:#F5F5F0;padding:9px 12px;font-size:13px;resize:none;outline:none;
+    font-family:inherit;max-height:90px;overflow-y:auto}
+  #sfw-in:focus{border-color:#F5C518}
+  #sfw-send{background:#F5C518;border:none;border-radius:10px;
+    width:38px;height:38px;font-size:16px;cursor:pointer;flex-shrink:0}
+  #sfw-send:disabled{background:#374151;cursor:default}
+  </style>
+
+  <button id="sfw-btn" title="Parla con Stefania">&#x1F4AC;</button>
+
+  <div id="sfw-panel">
+    <div id="sfw-head">
+      <div><strong>Stefania</strong><br><span>Assistente Evolution PRO</span></div>
+      <button onclick="sfwClose()">&#x2715;</button>
+    </div>
+    <div id="sfw-msgs">
+      <div class="sfw-bot">Ciao! Sono Stefania.
+  Di cosa ti occupi di preciso?</div>
+    </div>
+    <div id="sfw-foot">
+      <textarea id="sfw-in" placeholder="Scrivi un messaggio..." rows="1"
+        onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sfwSend()}"></textarea>
+      <button id="sfw-send" onclick="sfwSend()">&#10148;</button>
+    </div>
+  </div>
+
+  <script>
+  (function(){
+    var BACKEND = 'BACKEND_URL';
+    var hist=[], panel, msgs, inp, btn;
+
+    document.addEventListener('DOMContentLoaded', function(){
+      panel = document.getElementById('sfw-panel');
+      msgs  = document.getElementById('sfw-msgs');
+      inp   = document.getElementById('sfw-in');
+      btn   = document.getElementById('sfw-send');
+      inp.addEventListener('input', function(){
+        this.style.height='auto';
+        this.style.height=Math.min(this.scrollHeight,90)+'px';
+      });
+      document.getElementById('sfw-btn').addEventListener('click', function(){
+        panel.classList.toggle('open');
+        if(panel.classList.contains('open')) inp.focus();
+      });
+    });
+
+    window.sfwClose = function(){ panel.classList.remove('open'); };
+
+    window.sfwSend = async function(){
+      var txt = inp.value.trim();
+      if(!txt || btn.disabled) return;
+      inp.value=''; inp.style.height='auto';
+      addMsg(txt,'usr');
+      hist.push({role:'user', content:txt});
+      btn.disabled=true;
+      var el=addMsg('...','bot');
+      var page = (window.location.pathname.replace(/^\/|\/$/g,'') || 'homepage').replace(/-/g,'_');
+      try{
+        var r = await fetch(BACKEND+'/chat',{
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({messages:hist, page:page})
+        });
+        var d = await r.json();
+        el.textContent = d.reply || 'Errore nella risposta.';
+        if(d.ok) hist.push({role:'assistant', content:d.reply});
+      }catch(e){
+        el.textContent='Errore di connessione. Riprova tra poco.';
+      }
+      btn.disabled=false; inp.focus();
+      msgs.scrollTop=msgs.scrollHeight;
+    };
+
+    function addMsg(text, type){
+      var el=document.createElement('div');
+      el.className=type==='usr'?'sfw-usr':'sfw-bot';
+      el.textContent=text;
+      msgs.appendChild(el); msgs.scrollTop=msgs.scrollHeight;
+      return el;
+    }
+  })();
+  </script>
+  <!-- END STEFANIA WEB -->"""
+
+
+  if __name__ == "__main__":
+      port = int(os.environ.get("PORT", 5000))
+      print(f"Stefania Web -> http://localhost:{port}")
+      print(f"Modello: {MODEL}")
+      print(f"API Key: {'configurata' if os.environ.get('ANTHROPIC_API_KEY') else 'MANCANTE'}")
+      app.run(host="0.0.0.0", port=port, debug=False)
