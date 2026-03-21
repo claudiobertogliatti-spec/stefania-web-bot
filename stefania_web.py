@@ -1,7 +1,5 @@
-  #!/usr/bin/env python3
-  """
+#!/usr/bin/env python3                                                                                                                                                                                             """
   STEFANIA WEB — Chatbot pubblico evolution-pro.it + Bot Telegram
-  Backend Flask. Deploy su Render.com.
   """
 
   import os
@@ -399,7 +397,7 @@
       hist.push({role:'user', content:txt});
       btn.disabled=true;
       var el=addMsg('...','bot');
-      var page = (window.location.pathname.replace(/^\/|\/$/g,'') || 'homepage').replace(/-/g,'_');
+      var page = (window.location.pathname.replace(/^[/]|[/]$/g,'') || 'homepage').replace(/-/g,'_');
       try{
         var r = await fetch(BACKEND+'/chat',{
           method:'POST',
