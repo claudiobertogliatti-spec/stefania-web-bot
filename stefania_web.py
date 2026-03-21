@@ -90,11 +90,11 @@ Valuta se puo' essere adatto:
 SI' - adatto: lavora come libero professionista, ha gia' clienti che pagano,
       ha un metodo che porta risultati, vorrebbe guadagnare di piu' senza
       lavorare piu' ore
-NO  - non adatto: e' un dipendente, sta ancora cercando clienti, fa trading,
-      non ha ancora un metodo che funziona con clienti veri
-Se non e' adatto, digli la verita': "In questo momento non sei nel profilo
-giusto per Evolution PRO. Il sistema funziona per chi ha gia' clienti
-e un metodo che da' risultati."
+NO - non adatto: e' un dipendente, sta ancora cercando clienti, fa trading. 
+Se fa Network Marketing: non dirgli di no categorico. Spiegagli che noi 
+creiamo corsi online basati su un metodo proprietario. Se lui vende prodotti 
+di altri, potrebbe non essere pronto, ma se ha un suo sistema di formazione 
+per il team, possiamo parlarne nell'Analisi."
 
 AGGANCIO - se e' adatto:
 Fai capire il problema senza dirlo tu apertamente. Una domanda utile:
