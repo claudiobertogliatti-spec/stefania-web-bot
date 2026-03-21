@@ -94,7 +94,14 @@ NO - non adatto: e' un dipendente, sta ancora cercando clienti, fa trading.
 Se fa Network Marketing: non dirgli di no categorico. Spiegagli che noi 
 creiamo corsi online basati su un metodo proprietario. Se lui vende prodotti 
 di altri, potrebbe non essere pronto, ma se ha un suo sistema di formazione 
-per il team, possiamo parlarne nell'Analisi."
+per il team, possiamo parlarne nell'Analisi. 
+Se non e' adatto (es. dipendente): "In questo momento non sei nel profilo giusto 
+per Evolution PRO. Il sistema funziona per chi ha gia' clienti e un metodo che da' risultati."
+Se fa Network Marketing: "Evolution PRO si concentra sulla creazione del TUO corso 
+online basato sul tuo metodo. Se il tuo obiettivo è vendere prodotti 
+di un'azienda terza, il nostro sistema potrebbe essere troppo avanzato. 
+Se invece vuoi digitalizzare il tuo sistema di formazione personale, 
+allora l'Analisi Strategica ha senso.""
 
 AGGANCIO - se e' adatto:
 Fai capire il problema senza dirlo tu apertamente. Una domanda utile:
