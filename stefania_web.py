@@ -26,7 +26,7 @@ import anthropic
 
 logging.basicConfig(level=logging.INFO)
 
-MODEL = os.environ.get("STEFANIA_WEB_MODEL", "claude-4-5-haiku-20251001")
+MODEL = os.environ.get("STEFANIA_WEB_MODEL", "claude-haiku-4-5-20251001")
 ALLOWED_ORIGINS = os.environ.get(
     "CORS_ORIGINS",
     "https://evolution-pro.it,https://www.evolution-pro.it,http://localhost"
@@ -287,6 +287,13 @@ def telegram_webhook():
 
     return "ok"
 
+# --- REGISTRAZIONE WEBHOOK AUTOMATICA ---
+_tg_token   = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+_render_url = os.environ.get("RENDER_EXTERNAL_URL", "")
+
+if _tg_token and _render_url:
+    _res = _tg_call(_tg_token, "setWebhook", {"url": f"{_render_url}/telegram"})
+    logging.info(f"Telegram webhook registration: {_res}")
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
