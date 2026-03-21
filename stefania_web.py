@@ -1,15 +1,20 @@
- #!/usr/bin/env python3
+#!/usr/bin/env python3
 """
-STEFANIA WEB — Chatbot pubblico evolution-pro.it
-Backend Flask. Deploy su Render.com.
-Endpoint: POST /chat  {"messages":[...], "page":"homepage"}
+STEFANIA TELEGRAM — Bot Telegram di Evolution PRO
+Usa lo stesso system prompt di STEFANIA WEB (stefania_web.py).
+Deploy su Render.com come servizio separato (Background Worker).
+
+Variabili d'ambiente richieste su Render:
+  TELEGRAM_TOKEN      — token del bot (da @BotFather)
+  ANTHROPIC_API_KEY   — chiave API Anthropic
+  STEFANIA_WEB_MODEL  — opzionale, default: claude-haiku-4-5-20251001
 """
 
 import os
 import logging
 from pathlib import Path
 
-# Carica .env SOLO in sviluppo locale (stessa directory del file, non due livelli su)
+# Carica .env solo in locale
 _ENV = Path(__file__).resolve().parent / ".env"
 if _ENV.exists():
     with open(_ENV, encoding="utf-8") as _f:
@@ -20,26 +25,27 @@ if _ENV.exists():
                 if not os.environ.get(_k.strip()):
                     os.environ[_k.strip()] = _v.strip()
 
-from flask import Flask, request, jsonify
-from flask_cors import CORS
+from telegram import Update
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    ContextTypes,
+    filters,
+)
 import anthropic
 
-# ── Modello ────────────────────────────────────────────────────────────────────
-# Stringa ufficiale Anthropic. Usa la variabile d'ambiente per sovrascrivere.
-MODEL = os.environ.get("STEFANIA_WEB_MODEL", "claude-haiku-4-5-20251001")
+# ── Importa system prompt e builder da stefania_web ────────────────────────────
+# Se i due file sono nella stessa directory su Render, questo import funziona.
+# In alternativa, copia qui SYSTEM_BASE e build_system per renderlo autonomo.
+try:
+    from stefania_web import build_system, MODEL
+except ImportError:
+    # Fallback: definisci il modello e un builder minimale se stefania_web
+    # non è raggiungibile. Sostituisci con il prompt completo se necessario.
+    MODEL = os.environ.get("STEFANIA_WEB_MODEL", "claude-haiku-4-5-20251001")
 
-ALLOWED_ORIGINS = os.environ.get(
-    "CORS_ORIGINS",
-    "https://evolution-pro.it,https://www.evolution-pro.it,http://localhost"
-).split(",")
-
-app = Flask(__name__)
-CORS(app, origins=ALLOWED_ORIGINS)
-
-logging.basicConfig(level=logging.INFO)
-
-# ── System prompt ───────────────────────────────────────────────────────────────
-SYSTEM_BASE = """\
+    SYSTEM_BASE = """\
 Sei STEFANIA, assistente commerciale di Evolution PRO.
 
 == CHI SEI ==
@@ -173,179 +179,148 @@ E' il modo piu' utile perche' ogni caso e' diverso."
   su argomenti legati a Evolution PRO e ai corsi online."
 """
 
-PAGE_CONTEXTS = {
-    "homepage": "Il visitatore e' sulla homepage e probabilmente non sa ancora nulla. Parti con una domanda semplice su cosa fa nella vita.",
-    "analisi_strategica": "Il visitatore e' sulla pagina del questionario. E' quasi convinto. Rispondi solo alle sue ultime resistenze e rimanda al questionario.",
-    "post_acquisto": "Ha appena compilato il questionario. Confermalo nella scelta e digli che il team lo contatta a breve.",
-    "blog": "Viene da un articolo. E' curioso ma non sa ancora cosa sia Evolution PRO. Qualificalo con una domanda.",
-    "default": "Pagina generica.",
-}
+    def build_system(page: str) -> str:
+        contexts = {
+            "telegram": "Il visitatore arriva da Telegram. Potrebbe essere un lead freddo o qualcuno che ha sentito parlare di Evolution PRO. Qualificalo con una domanda semplice su cosa fa nella vita.",
+            "default": "Canale generico.",
+        }
+        ctx = contexts.get(page, contexts["default"])
+        return SYSTEM_BASE + f"\n\nCONTESTO CANALE: {ctx}"
 
 
-def build_system(page: str) -> str:
-    ctx = PAGE_CONTEXTS.get(page, PAGE_CONTEXTS["default"])
-    return SYSTEM_BASE + f"\n\nCONTESTO PAGINA: {ctx}"
+# ── Setup ───────────────────────────────────────────────────────────────────────
+logging.basicConfig(
+    format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
+    level=logging.INFO,
+)
+logger = logging.getLogger(__name__)
+
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+MAX_HISTORY = 20  # messaggi per utente, stesso limite del web
+
+# Memoria conversazioni: { chat_id: [{"role": ..., "content": ...}, ...] }
+conversations: dict[int, list[dict]] = {}
 
 
-@app.route("/chat", methods=["POST"])
-def chat():
-    data     = request.get_json(silent=True) or {}
-    messages = data.get("messages", [])
-    page     = data.get("page", "default")
+# ── Helpers ─────────────────────────────────────────────────────────────────────
+def get_history(chat_id: int) -> list[dict]:
+    return conversations.setdefault(chat_id, [])
 
-    if not messages:
-        return jsonify({"ok": False, "reply": "Nessun messaggio ricevuto."}), 400
 
-    messages = messages[-20:]
+def trim_history(chat_id: int) -> None:
+    hist = conversations.get(chat_id, [])
+    if len(hist) > MAX_HISTORY:
+        conversations[chat_id] = hist[-MAX_HISTORY:]
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        return jsonify({"ok": False,
-                        "reply": "Servizio non disponibile. Scrivi a claudio@evolution-pro.it"}), 503
+
+def call_claude(messages: list[dict]) -> str:
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    resp = client.messages.create(
+        model=MODEL,
+        max_tokens=300,
+        system=build_system("telegram"),
+        messages=messages,
+    )
+    return next((b.text for b in resp.content if b.type == "text"), "")
+
+
+# ── Command handlers ─────────────────────────────────────────────────────────────
+async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    /start — azzera la conversazione e invia il messaggio di benvenuto.
+    """
+    chat_id = update.effective_chat.id
+    conversations[chat_id] = []
+    await update.message.reply_text(
+        "Ciao! Sono Stefania.\nDi cosa ti occupi di preciso?"
+    )
+
+
+async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    /reset — cancella la cronologia e riparte dall'inizio.
+    """
+    chat_id = update.effective_chat.id
+    conversations[chat_id] = []
+    await update.message.reply_text(
+        "Cronologia azzerata. Ripartiamo da capo.\nDi cosa ti occupi di preciso?"
+    )
+
+
+async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text(
+        "Sono Stefania, assistente di Evolution PRO.\n\n"
+        "/start — inizia una nuova conversazione\n"
+        "/reset — azzera la cronologia\n\n"
+        "Scrivimi pure un messaggio per iniziare."
+    )
+
+
+# ── Message handler ──────────────────────────────────────────────────────────────
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id  = update.effective_chat.id
+    user_txt = (update.message.text or "").strip()
+
+    if not user_txt:
+        return
+
+    if not ANTHROPIC_API_KEY:
+        await update.message.reply_text(
+            "Servizio non disponibile al momento. Scrivi a claudio@evolution-pro.it"
+        )
+        return
+
+    # Aggiunge il messaggio utente alla storia
+    history = get_history(chat_id)
+    history.append({"role": "user", "content": user_txt})
+    trim_history(chat_id)
+
+    # Indicatore di digitazione
+    await context.bot.send_chat_action(chat_id=chat_id, action="typing")
 
     try:
-        client = anthropic.Anthropic(api_key=api_key)
-        resp = client.messages.create(
-            model=MODEL,
-            max_tokens=300,
-            system=build_system(page),
-            messages=messages,
-        )
-        reply = next((b.text for b in resp.content if b.type == "text"), "")
-        return jsonify({"ok": True, "reply": reply})
+        reply = call_claude(history)
+        history.append({"role": "assistant", "content": reply})
+        await update.message.reply_text(reply)
 
     except anthropic.AuthenticationError:
-        return jsonify({"ok": False, "reply": "Servizio non disponibile. Riprova tra poco."}), 503
+        logger.error("Anthropic AuthenticationError")
+        await update.message.reply_text(
+            "Servizio non disponibile. Scrivi a claudio@evolution-pro.it"
+        )
     except anthropic.RateLimitError:
-        return jsonify({"ok": False, "reply": "Troppo traffico. Riprova tra qualche secondo."}), 429
+        logger.warning("Anthropic RateLimitError")
+        await update.message.reply_text(
+            "Troppo traffico in questo momento. Riprova tra qualche secondo."
+        )
     except Exception as e:
-        app.logger.error(f"Chat error: {e}")
-        return jsonify({"ok": False, "reply": "Errore tecnico. Scrivi a claudio@evolution-pro.it"}), 500
+        logger.error(f"handle_message error: {e}")
+        await update.message.reply_text(
+            "Errore tecnico. Scrivi a claudio@evolution-pro.it"
+        )
 
 
-@app.route("/health", methods=["GET"])
-def health():
-    return jsonify({"status": "ok", "model": MODEL})
+# ── Entrypoint ───────────────────────────────────────────────────────────────────
+def main() -> None:
+    if not TELEGRAM_TOKEN:
+        raise RuntimeError(
+            "TELEGRAM_TOKEN non configurato. "
+            "Aggiungila nelle variabili d'ambiente di Render."
+        )
+    if not ANTHROPIC_API_KEY:
+        logger.warning("ANTHROPIC_API_KEY non configurata — le risposte AI non funzioneranno.")
 
+    app = Application.builder().token(TELEGRAM_TOKEN).build()
 
-CHAT_WIDGET_HTML = """<!-- STEFANIA WEB — Evolution PRO Chatbot -->
-<!-- Sostituisci BACKEND_URL con il tuo URL Render.com -->
-<style>
-#sfw-btn{position:fixed;bottom:24px;right:24px;z-index:9999;
-  width:54px;height:54px;border-radius:50%;background:#F5C518;
-  border:none;font-size:24px;cursor:pointer;
-  box-shadow:0 4px 16px rgba(0,0,0,.35);
-  transition:transform .15s;display:flex;align-items:center;justify-content:center}
-#sfw-btn:hover{transform:scale(1.1)}
-#sfw-panel{display:none;position:fixed;bottom:90px;right:24px;z-index:9998;
-  width:360px;height:500px;background:#1E2128;border-radius:20px;
-  border:1px solid #2D3139;box-shadow:0 8px 32px rgba(0,0,0,.55);
-  flex-direction:column;overflow:hidden;font-family:inherit}
-#sfw-panel.open{display:flex}
-#sfw-head{padding:14px 18px;background:#252932;border-bottom:1px solid #2D3139;
-  display:flex;align-items:center;justify-content:space-between}
-#sfw-head strong{color:#F5F5F0;font-size:14px}
-#sfw-head span{color:#9CA3AF;font-size:11px}
-#sfw-head button{background:none;border:none;color:#6B7280;font-size:18px;cursor:pointer}
-#sfw-msgs{flex:1;overflow-y:auto;padding:14px;
-  display:flex;flex-direction:column;gap:10px}
-.sfw-bot{align-self:flex-start;background:#252932;color:#F5F5F0;
-  padding:9px 14px;border-radius:16px 16px 16px 4px;
-  font-size:13px;max-width:86%;line-height:1.55;white-space:pre-wrap;word-wrap:break-word}
-.sfw-usr{align-self:flex-end;background:#F5C518;color:#1E2128;
-  padding:9px 14px;border-radius:16px 16px 4px 16px;
-  font-size:13px;max-width:80%;word-wrap:break-word}
-#sfw-foot{padding:10px 12px;background:#252932;border-top:1px solid #2D3139;
-  display:flex;gap:8px;align-items:flex-end}
-#sfw-in{flex:1;background:#1E2128;border:1px solid #374151;border-radius:12px;
-  color:#F5F5F0;padding:9px 12px;font-size:13px;resize:none;outline:none;
-  font-family:inherit;max-height:90px;overflow-y:auto}
-#sfw-in:focus{border-color:#F5C518}
-#sfw-send{background:#F5C518;border:none;border-radius:10px;
-  width:38px;height:38px;font-size:16px;cursor:pointer;flex-shrink:0}
-#sfw-send:disabled{background:#374151;cursor:default}
-</style>
+    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("reset", cmd_reset))
+    app.add_handler(CommandHandler("help",  cmd_help))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-<button id="sfw-btn" title="Parla con Stefania">&#x1F4AC;</button>
-
-<div id="sfw-panel">
-  <div id="sfw-head">
-    <div><strong>Stefania</strong><br><span>Assistente Evolution PRO</span></div>
-    <button onclick="sfwClose()">&#x2715;</button>
-  </div>
-  <div id="sfw-msgs">
-    <div class="sfw-bot">Ciao! Sono Stefania.
-Di cosa ti occupi di preciso?</div>
-  </div>
-  <div id="sfw-foot">
-    <textarea id="sfw-in" placeholder="Scrivi un messaggio..." rows="1"
-      onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sfwSend()}"></textarea>
-    <button id="sfw-send" onclick="sfwSend()">&#10148;</button>
-  </div>
-</div>
-
-<script>
-(function(){
-  var BACKEND = 'BACKEND_URL';
-  var hist=[], panel, msgs, inp, btn;
-
-  document.addEventListener('DOMContentLoaded', function(){
-    panel = document.getElementById('sfw-panel');
-    msgs  = document.getElementById('sfw-msgs');
-    inp   = document.getElementById('sfw-in');
-    btn   = document.getElementById('sfw-send');
-    inp.addEventListener('input', function(){
-      this.style.height='auto';
-      this.style.height=Math.min(this.scrollHeight,90)+'px';
-    });
-    document.getElementById('sfw-btn').addEventListener('click', function(){
-      panel.classList.toggle('open');
-      if(panel.classList.contains('open')) inp.focus();
-    });
-  });
-
-  window.sfwClose = function(){ panel.classList.remove('open'); };
-
-  window.sfwSend = async function(){
-    var txt = inp.value.trim();
-    if(!txt || btn.disabled) return;
-    inp.value=''; inp.style.height='auto';
-    addMsg(txt,'usr');
-    hist.push({role:'user', content:txt});
-    btn.disabled=true;
-    var el=addMsg('...','bot');
-    var page = (window.location.pathname.replace(/^\/|\/$/g,'') || 'homepage').replace(/-/g,'_');
-    try{
-      var r = await fetch(BACKEND+'/chat',{
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({messages:hist, page:page})
-      });
-      var d = await r.json();
-      el.textContent = d.reply || 'Errore nella risposta.';
-      if(d.ok) hist.push({role:'assistant', content:d.reply});
-    }catch(e){
-      el.textContent='Errore di connessione. Riprova tra poco.';
-    }
-    btn.disabled=false; inp.focus();
-    msgs.scrollTop=msgs.scrollHeight;
-  };
-
-  function addMsg(text, type){
-    var el=document.createElement('div');
-    el.className=type==='usr'?'sfw-usr':'sfw-bot';
-    el.textContent=text;
-    msgs.appendChild(el); msgs.scrollTop=msgs.scrollHeight;
-    return el;
-  }
-})();
-</script>
-<!-- END STEFANIA WEB -->"""
+    logger.info(f"Stefania Telegram avviata — modello: {MODEL}")
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    print(f"Stefania Web -> http://localhost:{port}")
-    print(f"Modello: {MODEL}")
-    print(f"API Key: {'configurata' if os.environ.get('ANTHROPIC_API_KEY') else 'MANCANTE'}")
-    app.run(host="0.0.0.0", port=port, debug=False)
+    main()
