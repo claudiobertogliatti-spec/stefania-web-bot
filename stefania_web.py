@@ -26,7 +26,7 @@ import anthropic
 
 logging.basicConfig(level=logging.INFO)
 
-MODEL = os.environ.get("STEFANIA_WEB_MODEL", "claude-3-5-haiku-20241022")
+MODEL = os.environ.get("STEFANIA_WEB_MODEL", "claude-4-5-haiku-20251001")
 ALLOWED_ORIGINS = os.environ.get(
     "CORS_ORIGINS",
     "https://evolution-pro.it,https://www.evolution-pro.it,http://localhost"
@@ -198,7 +198,7 @@ def chat():
 
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
-        return jsonify({"ok": False, "reply": "Servizio non disponibile. Scrivi a claudio@evolution-pro.it"}), 503
+        return jsonify({"ok": False, "reply": "Servizio non disponibile. Scrivi a assistenza@evolution-pro.it"}), 503
 
     try:
         client = anthropic.Anthropic(api_key=api_key)
@@ -213,7 +213,7 @@ def chat():
 
     except Exception as e:
         app.logger.error(f"Chat error: {e}")
-        return jsonify({"ok": False, "reply": "Errore tecnico. Scrivi a claudio@evolution-pro.it"}), 500
+        return jsonify({"ok": False, "reply": "Errore tecnico. Scrivi a assistenza@evolution-pro.it"}), 500
 
 
 @app.route("/health", methods=["GET"])
@@ -261,7 +261,7 @@ def telegram_webhook():
 
     if text.startswith("/start"):
         _tg_histories.pop(chat_id, None)
-        _tg_send(token, chat_id, "Ciao! Sono Stefania.\nDi cosa ti occupi di preciso?")
+        _tg_send(token, chat_id, "Ciao! Sono Stefania, assistente commerciale Evolution Pro.\nDi cosa ti occupi di preciso?")
         return "ok"
 
     hist = _tg_histories.get(chat_id, [])
